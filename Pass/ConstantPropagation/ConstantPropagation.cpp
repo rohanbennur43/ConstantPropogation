@@ -44,8 +44,22 @@ std::string getLhsVarFromValue(Value *ptrOperand){
     return ptrName;
 }
 
+void printConstants(map<string,int>&insToVal,map<string,int>&insToLine){
+    for(auto mp:insToVal){
+        // errs()<<mp.first<<"rrrrrrrrrr"<<mp.second<<"\n";
+    }
+    map<int,int>lineToVal;
+    for(auto mp1:insToVal){
+        // errs()<<insToLine[mp1.first]<<"sssssssssss"<<mp1.second<<"\n";
+        lineToVal[insToLine[mp1.first]] = mp1.second;
+        // errs()<<insToLine[mp1.first]<<"ddddddddddd"<<<<"\n";
+    }
+    for(auto mp2:lineToVal){
+        errs()<<mp2.first<<" "<<mp2.second<<"\n";
+    }
+}
+
 bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
-    errs()<<"Coming here&&&&&&&&&&&&&&&&&&&&&&&&&&&&&"<<"\n";
     bool mapsEqual = true;
 
     // Check if each key-value pair in map1 exists in map2 and matches
@@ -75,13 +89,18 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
 
         // Map to hold constant propagation information with nullptr as "no value" indicator
         std::map<BasicBlock*, std::map<string, int>> OUT;
-
+        map<string,int>insToLine;
+        int line = 0;
     for (auto &BB : F) {
         std::map<string,int>outM;
         for (auto &ins : BB) {
-            errs() << ins << "\n";
+            ++line;
+            errs()<<line<<":-" << ins << "\n";
             std::string lhsVar;
             lhsVar = getLhsVar(ins);
+            if(insToLine.find(lhsVar) == insToLine.end()){
+                insToLine[lhsVar] = line;
+            }
             // Perform all type checks in a single if condition
             if (auto *loadInst = dyn_cast<LoadInst>(&ins)) {
                 outM[lhsVar] = INT_MIN;
@@ -95,6 +114,9 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
         }
         OUT[&BB] = outM;
         errs() << "=====END OF BASIC BLOCK=====" << "\n";
+    }
+    for(auto mp:insToLine){
+        errs()<<mp.first<<"----"<<mp.second<<"\n";
     }
         int cnt = 0;
         BasicBlock &startBlock = F.getEntryBlock();
@@ -127,6 +149,7 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
             for (auto &ins : *block) {
                 errs() << "Instruction: " << ins << "\n";
                 string lhsVar = getLhsVar(ins);
+
                 // Handle Store Instruction
                 if (ins.getOpcode() == Instruction::Store) {
                     StoreInst *storeInst = cast<StoreInst>(&ins);
@@ -154,7 +177,7 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
                         outMapTemp[ptrVarName] = outMapTemp[valueVarName];
                         // globalMap[ptrVarName] = globalMap[valueVarName];
                         // errs()<<"In the store function"<<ptrVarName<<" "<<globalMap[ptrVarName]<<" "<<valueVarName<<" "<<globalMap[valueVarName]<<"\n";
-                        errs()<<"In the store function"<<outMapTemp[ptrVarName]<<" "<<outMapTemp[valueVarName]<<"\n";
+                        // errs()<<"In the store function"<<outMapTemp[ptrVarName]<<" "<<outMapTemp[valueVarName]<<"\n";
 
                     }
                 } 
@@ -318,8 +341,8 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
                             break;
                     }
                     outMapTemp[lhsVarName] = condition;
-                    errs()<<"operand1 is "<<lhsVal<<" operand2"<<rhsVal<<"condition"<<condition<<"\n";
-                    errs()<<"The value in cmp us =-=-=-=-=-=-"<<outMapTemp[lhsVarName]<<" "<<lhsVarName<<"\n";
+                    // errs()<<"operand1 is "<<lhsVal<<" operand2"<<rhsVal<<"condition"<<condition<<"\n";
+                    // errs()<<"The value in cmp us =-=-=-=-=-=-"<<outMapTemp[lhsVarName]<<" "<<lhsVarName<<"\n";
                     }
                     // OUT[block] = outMap;
 
@@ -339,12 +362,16 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
                         BasicBlock *falseBlock = brInst->getSuccessor(1); // Block to jump to if condition is false
                         Value *cond = brInst->getCondition();
                         string condlhsVar = getLhsVarFromValue(cond);
-                        errs()<<"The value of the branch instruction is"<<outMapTemp[condlhsVar]<<"\n";
-
-                        if(outMapTemp[condlhsVar] == 1){
+                        int condStateVal = outMapTemp[condlhsVar];
+                        outMapTemp.erase(condlhsVar);
+                        errs()<<"The value of the branch instruction is"<<condStateVal<<" "<<condlhsVar<<"\n";
+                        bool mapsEqual = compareMaps(OUT[block],outMapTemp);
+                        errs() << "Comparing the OUT and the actual map: " << (mapsEqual ? "equal" : "not equal") << "\n";
+                        if(!mapsEqual){
+                        if(condStateVal == 1){
                             errs()<<"Adding true block to the queue"<<"\n";
                             q.push(trueBlock);
-                        }else if(outMapTemp[condlhsVar] == 0){
+                        }else if(condStateVal == 0){
                             errs()<<"Adding false block to the queue"<<"\n";
                             q.push(falseBlock);
                         }else{
@@ -352,9 +379,8 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
                             q.push(trueBlock);
                             q.push(falseBlock);
                         }
-                        outMapTemp.erase(condlhsVar);
-                        bool mapsEqual = compareMaps(OUT[block],outMapTemp);
-                        errs() << "Comparing the OUT and the actual map: " << (mapsEqual ? "equal" : "not equal") << "\n";
+                        }
+
 
                     } else {
                         // Unconditional branch: Only one successor
@@ -364,39 +390,50 @@ bool compareMaps(const map<string, int> &map1, const map<string, int> &map2) {
                         // for(auto mp:OUT[block]){
                         //     errs()<<mp.first<<"----"<<mp.second<<block<<"\n";
                         // }
-                        q.push(nextBlock); // Add the next block to the queue
+                        if(!mapsEqual){
+                        q.push(nextBlock);} // Add the next block to the queue
                     }
-                errs()<<"->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"<<"\n";
-                for(auto mp:OUT[block]){
-                    errs()<<mp.first<<"->"<<mp.second<<"\n";
-                }
+
+                        // bool mapsEqual = compareMaps(OUT[block],outMapTemp);
+                        // errs() << "Comparing the OUT and the actual map: " << (mapsEqual ? "equal" : "not equal") << "\n";
+                errs()<<"->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"<<cnt<<"\n";
+                // for(auto mp:OUT[block]){
+                //     errs()<<mp.first<<"->"<<mp.second<<"\n";
+                // }
 
                     OUT[block] = outMapTemp;
+                    printConstants(OUT[block],insToLine);
+                // errs()<<"->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>----------------------------long"<<"\n";
+                // for(auto mp:OUT[block]){
+                //     errs()<<mp.first<<"->"<<mp.second<<"\n";
+                // }
+                // if(cnt == 12){
+                //     while(!q.empty()){
+                //         BasicBlock* b = q.front();
+                //         q.pop();
+                //         errs()<<"Instructions in the block are mmmmmmmmmmmmmmmmmmmmmmmmmmmm-s\n";
+                //         for(auto &ins:*b){
+                //             errs()<<ins<<"\n";
+                //         }
 
-                errs()<<"->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>----------------------------long"<<"\n";
-                for(auto mp:OUT[block]){
-                    errs()<<mp.first<<"->"<<mp.second<<"\n";
-                }
-                errs()<<"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<coming here after every block"<<cnt<<"\n";
-                if(cnt == 12){
-                    while(!q.empty()){
-                        BasicBlock* b = q.front();
-                        q.pop();
-                        errs()<<"Instructions in the block are mmmmmmmmmmmmmmmmmmmmmmmmmmmm-s\n";
-                        for(auto &ins:*b){
-                            errs()<<ins<<"\n";
-                        }
+                //         for (BasicBlock *succ : successors(b)) {
+                //                 errs() << succ->getName() << "\n";
+                //             }
+                //         errs()<<"Instructions in the block are mmmmmmmmmmmmmmmmmmmmmmmmmmmm-e\n";
 
-                        for (BasicBlock *succ : successors(b)) {
-                                errs() << succ->getName() << "\n";
-                            }
-                        errs()<<"Instructions in the block are mmmmmmmmmmmmmmmmmmmmmmmmmmmm-e\n";
+                //     }
+                //     errs()<<"Size of the queue is"<<q.size()<<"\n";   
+                //     return false;
+                // }
+            }else if (auto *returnInst = dyn_cast<ReturnInst>(&ins)) {
+                OUT[block] = outMapTemp;
+                        errs()<<"Came across a return instruction++++++++++++++++++++++++++++++++"<<"\n";
+                        printConstants(OUT[block],insToLine);
 
+                        // for(auto mp:OUT[block]){
+                        //     errs()<<mp.first<<"->"<<mp.second<<"\n";
+                        // }
                     }
-                    errs()<<"Size of the queue is"<<q.size()<<"\n";   
-                    return false;
-                }
-            }
 
 
             }
@@ -431,4 +468,3 @@ char ConstantPropagation::ID = 0;
 static RegisterPass<ConstantPropagation> X("ConstantPropagation", "Constant Propagation Pass",
                                            false /* Only looks at CFG */,
                                            false /* Analysis Pass */);
-
